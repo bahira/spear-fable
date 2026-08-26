@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spear-fable"
+version = "1.0.0"
+description = "SPEAR × Fable-5 ultra-small agentic experiment"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = ["numpy>=1.20"]
+
+[project.optional-dependencies]
+hf = ["datasets"]
+dev = ["pytest"]
+
+[project.scripts]
+# Usage prévu : installation en mode dev depuis le repo (les modèles restent
+# résolus relativement au checkout) :  pip install -e .
+spear-agent = "agent:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+py-modules = ["spear_core", "agent"]

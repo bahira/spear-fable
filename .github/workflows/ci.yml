@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install numpy pytest
+      - name: Tests standalone
+        run: python tests/test_all.py
+      - name: Tests pytest
+        run: pytest -q tests
+      - name: Smoke entraînement synthétique
+        run: python examples/train_policy.py --n 500 --out models/_ci_smoke.npz
+      - name: Agent boot + kernel call
+        run: |
+          python -c "import sys; sys.path.insert(0,'src'); from agent import SpearFableAgent; a=SpearFableAgent(); print(a.step('lorentz(0.9)'))"

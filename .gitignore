@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+*.zip
+.spear_memory.json
+models/_ci_smoke.*

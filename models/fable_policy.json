@@ -1,0 +1,13 @@
+{
+  "version": 3,
+  "target": "generative needs-exec",
+  "dataset": "synthetic",
+  "emb_d_in": 10,
+  "emb_extra": 8,
+  "emb_seed": 42,
+  "policy_h": 32,
+  "policy_seed": 7,
+  "n_samples": 4000,
+  "test_accuracy": 0.9838,
+  "note": "mu/sigma figés au training — inférence single-row correcte"
+}
