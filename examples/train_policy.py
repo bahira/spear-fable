@@ -12,6 +12,8 @@ Deux modes :
 Usage : python examples/train_policy.py [--hf lordx64/fable-sft-combined-v2]
 """
 import argparse
+import itertools
+import json
 import re
 import sys
 import time
@@ -105,11 +107,180 @@ def extract_text(ex: dict) -> str:
     return str(t)
 
 
-# Évidence d'agentisme sur le TEXTE BRUT (rôles réels, actions outiles) —
+# Évidence d'exécution sur le TEXTE BRUT (rôles réels, actions outiles) —
 # distincte du vecteur de features compressé -> apprentissage non trivial.
 _ACTION_RE = re.compile(r"Act:\s*\w+|```(?:bash|python)|<function_call>|"
                         r'"name"\s*:|tool_call|Action:', re.I)
 _ROLE_RE = re.compile(r"(?m)^(human|gpt|user|assistant|system|function|tool)\s*:", re.I)
+
+# Cible généraliste : la RÉPONSE requiert-elle exécution/code/outils ?
+# (annotations de calcul <<a/b=c>> de GSM8K incluses)
+_EXEC_RE = re.compile(r"```|<function_call>|\"name\"\s*:|tool_call|Act:\s*\w+|<<[^>]+>>", re.I)
+
+
+def _mget(m: dict, *keys, default=""):
+    for k in keys:
+        if k in m and m[k] is not None:
+            return m[k]
+    return default
+
+
+def walk_convs(convs):
+    """Paires (prompt_user, réponse_assistant) depuis une liste ShareGPT/OpenAI.
+    Boucles agentiques : les tours tool/system sont ignorés et chaque réponse
+    est rattachée au dernier message user (pending n'est PAS consommé)."""
+    pending = None
+    for m in convs:
+        role = str(_mget(m, "role", "from")).lower()
+        content = str(_mget(m, "content", "value"))
+        if role in ("user", "human"):
+            pending = content
+        elif role in ("assistant", "gpt") and pending is not None:
+            yield pending, content
+
+
+_GLAIVE_TURN_RE = re.compile(r"(user|assistant)\s*:\s*", re.I)
+
+_CHATML_RE = re.compile(r"<\|im_start\|>(\w+)\s*\n(.*?)<\|im_end\|>", re.S)
+
+def chatml_pairs(text: str):
+    """Paires depuis du ChatML (<|im_start|>role ... <|im_end|>)."""
+    pending = None
+    for role, content in _CHATML_RE.findall(text):
+        role = role.lower()
+        if role == "user":
+            pending = content
+        elif role == "assistant" and pending is not None:
+            yield pending, content
+            pending = None
+
+def glaive_pairs(chat: str):
+    parts = _GLAIVE_TURN_RE.split(chat)
+    # split retourne [pré, role, texte, role, texte, ...]
+    pending = None
+    for i in range(1, len(parts) - 1, 2):
+        role, text = parts[i].lower(), parts[i + 1].strip()
+        if role == "user":
+            pending = text
+        elif role == "assistant" and pending is not None:
+            yield pending, text
+            pending = None
+
+
+def _stream(name, cfg=None, cap=None):
+    from datasets import load_dataset
+    kw = dict(split="train", streaming=True)
+    ds = load_dataset(name, cfg, **kw) if cfg else load_dataset(name, **kw)
+    return itertools.islice(ds, cap) if cap else ds
+
+
+def iter_generalist_pairs(source: str, cap: int):
+    """Paires (prompt, réponse) par dataset spécialisé HF."""
+    if source == "agentinstruct":
+        from datasets import load_dataset
+        files = {
+            "alfworld": "data/alfworld-00000-of-00001-302ad687bb3817a4.parquet",
+            "db": "data/db-00000-of-00001-916a87c4725da8c0.parquet",
+            "kg": "data/kg-00000-of-00001-9e159f6d0557d229.parquet",
+            "mind2web": "data/mind2web-00000-of-00001-fc25d47330eea0fc.parquet",
+            "os": "data/os-00000-of-00001-971539c34fcc7500.parquet",
+            "webshop": "data/webshop-00000-of-00001-9f2ae60445e11b4e.parquet",
+        }
+        ds = load_dataset("THUDM/AgentInstruct", data_files=files)
+        n = 0
+        for split in ds.values():
+            for row in split:
+                for pr, rs in walk_convs(row["conversations"]):
+                    yield pr, rs
+                    n += 1
+                    if n >= cap:
+                        return
+    elif source == "glaive":
+        for ex in _stream("glaiveai/glaive-function-calling-v2"):
+            for pr, rs in glaive_pairs(str(ex.get("chat") or "")):
+                yield pr, rs
+    elif source == "toolace":
+        for ex in _stream("Team-ACE/ToolACE", cap=cap * 2):
+            yield from walk_convs(ex.get("conversations") or [])
+    elif source == "smoltalk":
+        for ex in _stream("HuggingFaceTB/smoltalk", "smol-magpie-ultra", cap=cap * 2):
+            yield from walk_convs(ex.get("messages") or [])
+    elif source == "opencode":
+        for ex in _stream("nvidia/OpenCodeInstruct", cap=cap):
+            yield str(ex.get("input") or ""), str(ex.get("output") or "")
+    elif source == "gsm8k":
+        for ex in _stream("openai/gsm8k", "main", cap=cap):
+            yield str(ex.get("question") or ""), str(ex.get("answer") or "")
+    elif source == "fable_sft":
+        # Vraies sessions Claude Code (Fable 5) — ChatML brut
+        from datasets import load_dataset
+        ds = load_dataset("lordx64/fable-sft-combined-v2", split="train")
+        n = 0
+        for ex in ds:
+            for pr, rs in chatml_pairs(str(ex.get("text") or "")):
+                yield pr, rs
+                n += 1
+                if n >= cap:
+                    return
+    elif source == "fable_premium":
+        from datasets import load_dataset
+        ds = load_dataset(
+            "saidutta69/fable-5-premium",
+            data_files={"agent_traces": "agent_traces/train.parquet"},
+        )["agent_traces"]
+        n = 0
+        for ex in ds:
+            msgs = ex.get("messages")
+            if isinstance(msgs, str):
+                msgs = json.loads(msgs)
+            for pr, rs in walk_convs(msgs or []):
+                yield pr, rs
+                n += 1
+                if n >= cap:
+                    return
+    else:
+        raise ValueError(f"source inconnue: {source}")
+
+
+GENERALIST_SOURCES = ["agentinstruct", "fable_sft", "fable_premium", "glaive",
+                      "toolace", "smoltalk", "opencode", "gsm8k"]
+FABLE_SOURCES = ["fable_sft", "fable_premium"]
+
+
+def build_mixture(sources, per_source=1000, neg_ratio=1.5):
+    """Mélange multi-sources : X = features du PROMPT,
+    y = évidence d'exécution dans la RÉPONSE (jamais l'inverse)."""
+    Xp, yp, sp = [], [], []
+    counts = {}
+    for src in sources:
+        got = 0
+        for pr, rs in iter_generalist_pairs(src, per_source):
+            # Les vrais prompts d'agents coding sont longs — cap large.
+            if len(pr) < 10 or len(pr) > 20000:
+                continue
+            Xp.append(features_from_text(pr))
+            yp.append(1.0 if _EXEC_RE.search(rs) else 0.0)
+            sp.append(src)
+            got += 1
+            if got >= per_source * 3:
+                break
+        counts[src] = got
+        print(f"  {src}: {got} paires")
+    X = np.stack(Xp)
+    y = np.array(yp, np.float32)
+    sp = np.array(sp)
+
+    # Rééquilibre global : garde tous les positifs, sous-échantillonne les négatifs.
+    pos = y == 1.0
+    n_neg = int(pos.sum() * neg_ratio)
+    neg_idx = np.where(~pos)[0]
+    if len(neg_idx) > n_neg:
+        keep_neg = np.random.RandomState(42).choice(neg_idx, n_neg, replace=False)
+        keep = np.sort(np.concatenate([np.where(pos)[0], keep_neg]))
+    else:
+        keep = np.arange(len(y))
+    print(f"sources={counts}")
+    return X[keep], y[keep], sp[keep]
 
 
 def load_agent_instruct(envs=("os", "db", "webshop", "alfworld", "kg", "mind2web")):
@@ -154,20 +325,40 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--hf", default=None,
                     help="dataset HF réel (ex: THUDM/AgentInstruct) — sinon synthétique")
-    ap.add_argument("--n", type=int, default=4000)
-    ap.add_argument("--out", default="models/fable_policy.npz")
+    ap.add_argument("--fable", action="store_true",
+                    help="vraies traces Fable-5 uniquement (lordx64 + premium)")
+    ap.add_argument("--generalist", action="store_true",
+                    help="mélange multi-domaines (agents, Fable, tools, code, maths…)")
+    ap.add_argument("--n", type=int, default=1000,
+                    help="paires max par source (modes --fable/--generalist)")
+    ap.add_argument("--out", default=None)
     args = ap.parse_args()
+    if args.out is None:
+        args.out = ("models/fable_policy.npz" if not args.fable and not args.generalist
+                    else "models/fable_traces_policy.npz" if args.fable
+                    else "models/generalist_policy.npz")
 
     print("=" * 60)
-    mode = (f"réel {args.hf} — cible long-horizon" if args.hf
+    mode = ("generaliste: " + "+".join(GENERALIST_SOURCES) if args.generalist
+            else "fable traces: " + "+".join(FABLE_SOURCES) if args.fable
+            else f"réel {args.hf} — cible long-horizon" if args.hf
             else "synthétique — labels génératifs (non circulaires)")
     print(f" Train SPEAR×Fable-5 policy | {mode}")
     print("=" * 60)
 
-    if args.hf:
+    src = None  # marqueur source par sample (modes mélange)
+    if args.generalist:
+        X, y, src = build_mixture(GENERALIST_SOURCES, per_source=args.n)
+        target = "needs-exec (réponse)"
+    elif args.fable:
+        X, y, src = build_mixture(FABLE_SOURCES, per_source=max(args.n, 2000))
+        target = "needs-exec (réponse)"
+    elif args.hf:
         X, y = build_hf(args.hf, args.n)
+        target = "long-horizon (action turns median-split)"
     else:
-        X, y = build_synthetic(args.n)
+        X, y = build_synthetic(args.n * 4)
+        target = "generative needs-exec"
     print(f"samples={len(X)}  pos_rate={y.mean()*100:.1f}%  feat_dim={X.shape[1]}")
 
     perm = np.random.RandomState(42).permutation(len(X))
@@ -196,12 +387,18 @@ def main():
     acc_raw = pol_raw.accuracy(Zte, yte)
     print(f"test_acc(spear_emb)={acc_e*100:.1f}%  (baseline raw stdz: {acc_raw*100:.1f}%)  "
           f"train_time={dt:.2f}s")
+    if src is not None:
+        ste = src[te]
+        for s in sorted(set(ste)):
+            m = ste == s
+            print(f"  {s:14s} acc={pol.accuracy(Xte_e[m], yte[m])*100:5.1f}%  (n={int(m.sum())})")
 
     meta = {
-        "version": 3,
-        "target": "long-horizon (action turns median-split)" if args.hf
-                  else "generative needs-exec",
-        "dataset": args.hf or "synthetic",
+        "version": 4,
+        "target": target,
+        "dataset": ("mixture:" + "+".join(GENERALIST_SOURCES) if args.generalist
+                    else "mixture:" + "+".join(FABLE_SOURCES) if args.fable
+                    else args.hf or "synthetic"),
         "emb_d_in": int(emb.d_in), "emb_extra": 8, "emb_seed": 42,
         "policy_h": int(pol.W1.shape[1]), "policy_seed": 7,
         "n_samples": int(len(X)), "test_accuracy": round(acc_e, 4),

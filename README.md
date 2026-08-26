@@ -39,12 +39,38 @@ Ré-entraînement :
 
 ```bash
 python examples/train_policy.py                                  # routeur (synthétique)
+python examples/train_policy.py --fable                          # vraies traces Fable-5
+python examples/train_policy.py --generalist                     # mélange 8 sources HF
 python examples/train_policy.py --hf THUDM/AgentInstruct \
-       --out models/agentinstruct_policy.npz                     # données réelles
-python tests/test_all.py                                         # 7 checks
+       --out models/agentinstruct_policy.npz                     # un seul dataset
+python tests/test_all.py                                         # 8 checks
 ```
 
-`--hf` nécessite `pip install datasets`. Chaque modèle a un sidecar `.json`
+`--hf/--fable/--generalist` nécessitent `pip install datasets`.
+
+### Modèle généraliste (`--generalist`)
+
+Mélange équilibré de datasets HF spécialisés ; cible unifiée **non circulaire** :
+input = le message user, label = « la réponse contient-elle exécution/code/outils ? »
+(regex sur la réponse uniquement). Paires extraites : AgentInstruct,
+Fable-5 SFT + Premium (vraies traces Claude Code), Glaive function-calling,
+ToolACE, SmolTalk, OpenCodeInstruct, GSM8K.
+
+| Source | Acc test |
+|---|---|
+| AgentInstruct / Fable-5 premium | 100% |
+| OpenCodeInstruct | 92.7% |
+| ToolACE | 91.2% |
+| SmolTalk | 83.8% |
+| Global | **76.7%** (baseline brut : 72.1%) |
+| Fable-5 SFT brut | 55.6% |
+| Glaive / GSM8K | 61.3% / 50.0% |
+
+Limite assumée : les 10 features sont structurelles — un problème de maths
+en prose est indécidable pour ce routeur (GSM8K ≈ hasard), c'est le prix
+d'un modèle de quelques Ko sans sémantique.
+
+Chaque modèle a un sidecar `.json`
 (méta : dataset, cible, accuracy).
 
 ## What you can say

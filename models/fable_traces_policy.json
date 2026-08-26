@@ -1,0 +1,13 @@
+{
+  "version": 4,
+  "target": "needs-exec (réponse)",
+  "dataset": "mixture:fable_sft+fable_premium",
+  "emb_d_in": 10,
+  "emb_extra": 8,
+  "emb_seed": 42,
+  "policy_h": 32,
+  "policy_seed": 7,
+  "n_samples": 1957,
+  "test_accuracy": 0.7832,
+  "note": "mu/sigma figés au training — inférence single-row correcte"
+}

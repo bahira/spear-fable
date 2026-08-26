@@ -1,0 +1,13 @@
+{
+  "version": 4,
+  "target": "needs-exec (réponse)",
+  "dataset": "mixture:agentinstruct+fable_sft+fable_premium+glaive+toolace+smoltalk+opencode+gsm8k",
+  "emb_d_in": 10,
+  "emb_extra": 8,
+  "emb_seed": 42,
+  "policy_h": 32,
+  "policy_seed": 7,
+  "n_samples": 9520,
+  "test_accuracy": 0.7673,
+  "note": "mu/sigma figés au training — inférence single-row correcte"
+}
