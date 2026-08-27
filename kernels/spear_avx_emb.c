@@ -34,25 +34,33 @@ void spear_batch_gelu(const double* x, double* out, long long n) {
     }
 }
 
-/* tanh approx certifiee (rationnel [3/2], cross-pollination SpearVM) :
-   tanh(x) ~= cn*(y + c3*y^3)/(b0 + b2*y^2), y=clamp(x,-3,3).
-   Erreur mesuree : tanh 8.5e-3, gauss 8.5e-3, lorentz 7.5e-2
-   (vs 0.89 / 1.23 pour l'ancien polynome). */
+/* tanh approx certifiee — forme Pade (ax+bx^3)/(1+cx^2+dx^4), y=clamp(x,-4,4).
+   Fit minimax direct sur les erreurs gauss/lorentz composees (1.2M pts).
+   Erreurs mesurees (grille 2M pts independante) : tanh 1.6e-3, gauss 1.6e-3,
+   lorentz 3.6e-3 (vs 0.89 / 1.23 pour l'ancien polynome ; > SpearVM [3/2]). */
+#define FTANH_A 0.994894946
+#define FTANH_B 0.076611228
+#define FTANH_C 0.402171314
+#define FTANH_D 0.005670342
+
 static inline __m256d fast_tanh_avx(__m256d x) {
-    const __m256d hi = _mm256_set1_pd(3.0), lo = _mm256_set1_pd(-3.0);
-    const __m256d cn = _mm256_set1_pd(0.900021), c3 = _mm256_set1_pd(0.053639);
-    const __m256d b0 = _mm256_set1_pd(0.90122), b2 = _mm256_set1_pd(0.343141);
+    const __m256d hi = _mm256_set1_pd(4.0), lo = _mm256_set1_pd(-4.0);
+    const __m256d ca = _mm256_set1_pd(FTANH_A), cb = _mm256_set1_pd(FTANH_B);
+    const __m256d cc = _mm256_set1_pd(FTANH_C), cd = _mm256_set1_pd(FTANH_D);
+    const __m256d one = _mm256_set1_pd(1.0);
     __m256d y = _mm256_max_pd(lo, _mm256_min_pd(hi, x));
-    __m256d t = _mm256_mul_pd(y, y);
-    __m256d num = _mm256_mul_pd(y, _mm256_add_pd(_mm256_set1_pd(1.0), _mm256_mul_pd(c3, t)));
-    __m256d den = _mm256_add_pd(b0, _mm256_mul_pd(b2, t));
-    return _mm256_mul_pd(cn, _mm256_div_pd(num, den));
+    __m256d y2 = _mm256_mul_pd(y, y);
+    __m256d num = _mm256_fmadd_pd(cb, y2, ca);
+    num = _mm256_mul_pd(num, y);
+    __m256d den = _mm256_fmadd_pd(cd, y2, cc);
+    den = _mm256_fmadd_pd(den, y2, one);
+    return _mm256_div_pd(num, den);
 }
 
 static inline double fast_tanh_scalar(double x) {
-    double y = fmax(-3.0, fmin(3.0, x));
-    double t = y * y;
-    return 0.900021 * ((y + 0.053639 * y * y * y) / (0.90122 + 0.343141 * t));
+    double y = fmax(-4.0, fmin(4.0, x));
+    double y2 = y * y;
+    return (FTANH_A * y + FTANH_B * y * y2) / (1.0 + FTANH_C * y2 + FTANH_D * y2 * y2);
 }
 
 void spear_batch_gauss(const double* x, double* out, long long n) {

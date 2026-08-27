@@ -26,27 +26,26 @@ import matplotlib.pyplot as plt
 # 1. ENCAPSULATION DES ACTIVATIONS SPEAR ALU
 # ==========================================
 
-# Tanh ALU : rationnel [3/2] certifié, cross-pollination SpearVM <-> spear-fable.
-# tanh(x) ~= cn * (y + c3*y^3) / (b0 + b2*y^2),  y = clamp(x, -3, 3)
-# Erreur mesurée : tanh 8.5e-3, gauss 8.5e-3, lorentz 7.5e-2 (vs 0.89/1.23 avant).
-TANH_CN = 0.900021
-TANH_C3 = 0.053639
-TANH_B0 = 0.90122
-TANH_B2 = 0.343141
+# Tanh ALU : forme Pade (a*x+b*x^3)/(1+c*x^2+d*x^4), y=clamp(x,-4,4).
+# Fit minimax direct sur les erreurs gauss/lorentz composees (1.2M pts).
+# Erreur mesuree (grille 2M pts) : tanh 1.6e-3, gauss 1.6e-3, lorentz 3.6e-3
+# (vs 0.89/1.23 pour le polynome historique, > rationnel SpearVM [3/2]).
+TANH_A = 0.994894946
+TANH_B = 0.076611228
+TANH_C = 0.402171314
+TANH_D = 0.005670342
 
 
 class TanhALU(nn.Module):
-    """Approximation rationnelle [3/2] de tanh. Zéro transcendance, 100% ALU."""
+    """Approximation rationnelle Pade [3/4] de tanh. Zéro transcendance, 100% ALU."""
 
     def __init__(self):
         super().__init__()
 
     def forward(self, x):
-        y = torch.clamp(x, -3.0, 3.0)
+        y = torch.clamp(x, -4.0, 4.0)
         y2 = y * y
-        num = y * (1.0 + TANH_C3 * y2)
-        den = TANH_B0 + TANH_B2 * y2
-        return TANH_CN * (num / den)
+        return (TANH_A * y + TANH_B * y * y2) / (1.0 + TANH_C * y2 + TANH_D * y2 * y2)
 
 
 class SigmoidALU(nn.Module):

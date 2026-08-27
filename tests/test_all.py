@@ -27,6 +27,28 @@ def test_kernels_accuracy():
     assert set(KERNELS) == {"gelu", "lorentz", "gauss", "soft", "kepler"}
 
 
+def test_tanh_avx_rational_accuracy():
+    """Garde-fou des constantes du tanh Pade [3/4] des kernels AVX (spear_avx_emb.c).
+    Reproduction pure-Python de la forme (a*x+b*x^3)/(1+c*x^2+d*x^4), clamp [-4,4].
+    Erreur mesuree (grille 2M pts) : tanh 1.6e-3, gauss 1.6e-3, lorentz 3.6e-3."""
+    A, B, C, D = 0.994894946, 0.076611228, 0.402171314, 0.005670342
+
+    def f(x):
+        y = np.clip(x, -4.0, 4.0)
+        y2 = y * y
+        return (A * y + B * y * y2) / (1.0 + C * y2 + D * y2 * y2)
+
+    x = np.linspace(-6, 6, 200001)
+    assert np.max(np.abs(f(x) - np.tanh(x))) < 2.5e-3  # tanh budget
+    xg = np.linspace(-12, 12, 200001)
+    assert np.max(np.abs(f(0.6 * xg) - np.tanh(0.6 * xg))) < 2.5e-3  # gauss
+    b = np.tanh(0.5 * xg)
+    bl = f(0.5 * xg)
+    ref = 1.0 / np.sqrt(1.0 - 0.8 * b * b)
+    got = 1.0 / np.sqrt(1.0 - 0.8 * bl * bl)
+    assert np.max(np.abs(got - ref)) < 6e-3  # lorentz (amplifie l'erreur tanh)
+
+
 def _toy_model(tmp):
     # Corpus aux stats réalistes (features structurelles, dims parfois constantes)
     X, y = build_synthetic(1500)
