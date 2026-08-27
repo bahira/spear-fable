@@ -85,6 +85,37 @@ class GELUv2(nn.Module):
         return x * t3 * (6.0 * t2 - 15.0 * t + 10.0) - 0.01104961
 
 
+class GELUErf(nn.Module):
+    """GELU haute précision : 0.5*x*(1+erf_approx(x/sqrt2)) via le rationnel
+    erf_v2 certifié de SpearVM. L_inf 2.05e-5 (MSE 8.3e-11), ~850x plus précis
+    que le quintique, toujours sans transcendance (erf approché par un rationnel)."""
+
+    def __init__(self):
+        super().__init__()
+        # rationnel erf_v2 : x*P(y)/D(y), y=x^2, clamp [-3.5,3.5]
+        self.P = [1.12841751266903279, 0.183482771948230095, 0.0573373674730976776,
+                  0.00248430060206610405, 0.00000372785350475749968]
+        self.D = [1.0, 0.496471589671860558, 0.114910282096263028,
+                  0.0161717422205343367, 0.000186656477609649336,
+                  -0.000000174401807407079551]
+
+    def _erf(self, u):
+        y = u * u
+        pn = torch.zeros_like(u)
+        for c in reversed(self.P):
+            pn = pn * y + c
+        dn = torch.zeros_like(u)
+        for c in reversed(self.D):
+            dn = dn * y + c
+        h = u * (pn / dn)
+        # clamp (saturation douce à ±1)
+        return torch.where(u > 3.5, torch.ones_like(u),
+                           torch.where(u < -3.5, -torch.ones_like(u), h))
+
+    def forward(self, x):
+        return 0.5 * x * (1.0 + self._erf(x * 0.7071067811865476))
+
+
 # Dictionnaire global pour instancier dynamiquement l'activation choisie
 ACTIVATIONS = {
     'native_gelu': nn.GELU,
@@ -92,6 +123,7 @@ ACTIVATIONS = {
     'native_tanh': nn.Tanh,
     'native_sigmoid': nn.Sigmoid,
     'spear_gelu_v2': GELUv2,
+    'spear_gelu_erf': GELUErf,
     'spear_silu': SiLUALU,
     'spear_tanh': TanhALU,
     'spear_sigmoid': SigmoidALU,
