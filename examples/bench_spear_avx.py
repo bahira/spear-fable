@@ -15,14 +15,22 @@ from numpy.ctypeslib import ndpointer
 if hasattr(sys.stdout, "reconfigure"):  # consoles cp1252 (Windows)
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-# ---- load AVX2 lib (chemin portable, skip gracieux si absente) ----
-LIB = Path(__file__).resolve().parents[1] / "kernels" / (
-    "libspear_emb.dll" if os.name == "nt" else "libspear_emb.so")
+# ---- load AVX2 lib ----
+# Priorite : spur_kernels.so (SpearVM, OpenMP) > libspear_emb.so (local)
+import glob as _glob
+_SPEARM = list(_glob.glob(str(Path(__file__).resolve().parents[2] / "repos" / "SpearVM" / "spur_math" / "spur_kernels.*")))
+if _SPEARM:
+    LIB = Path(_SPEARM[0])
+    _GELU_NAME = "spur_batch_gelu"
+else:
+    LIB = Path(__file__).resolve().parents[1] / "kernels" / (
+        "libspear_emb.dll" if os.name == "nt" else "libspear_emb.so")
+    _GELU_NAME = "spear_batch_gelu"
+
 if not LIB.exists():
-    sys.exit(f"[skip] {LIB} introuvable — compile d'abord kernels/spear_avx_emb.c "
-             f"(gcc -O3 -mavx2 -shared). Le bench NumPy seul ne nécessite pas cette lib.")
+    sys.exit(f"[skip] libs introuvablees — compilez kernels/spear_avx_emb.c ou installez SpearVM.")
 lib = ctypes.CDLL(str(LIB))
-lib.spear_batch_gelu.argtypes = [
+lib[_GELU_NAME].argtypes = [
     ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),
     ndpointer(ctypes.c_double, flags="C_CONTIGUOUS"),
     ctypes.c_longlong,
@@ -33,7 +41,7 @@ lib.spear_batch_lorentz.argtypes = lib.spear_batch_gelu.argtypes
 def avx_gelu(x):
     x = np.ascontiguousarray(x, dtype=np.float64)
     out = np.empty_like(x)
-    lib.spear_batch_gelu(x, out, x.size)
+    lib[_GELU_NAME](x, out, x.size)
     return out
 
 def avx_gauss(x):

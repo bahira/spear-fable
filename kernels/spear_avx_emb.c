@@ -6,7 +6,11 @@
 #include <string.h>
 #include <stdint.h>
 
-/* GELU SPEAR approx — vectorized */
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+/* GELU SPEAR approx — vectorized AVX2 + OpenMP */
 void spear_batch_gelu(const double* x, double* out, long long n) {
     const __m256d c306 = _mm256_set1_pd(0.306923);
     const __m256d c501 = _mm256_set1_pd(0.501);
@@ -14,15 +18,16 @@ void spear_batch_gelu(const double* x, double* out, long long n) {
     const __m256d c004 = _mm256_set1_pd(0.004004);
     const __m256d zero = _mm256_setzero_pd();
     const __m256d one002 = _mm256_set1_pd(1.002);
-    long long i = 0;
-    for (; i + 4 <= n; i += 4) {
+    long long vec = n & ~3LL;
+    #pragma omp parallel for schedule(static)
+    for (long long i = 0; i < vec; i += 4) {
         __m256d v = _mm256_loadu_pd(x + i);
         __m256d u = _mm256_fmadd_pd(c306, v, c501);
         u = _mm256_min_pd(_mm256_max_pd(u, zero), one002);
         __m256d r = _mm256_fmsub_pd(c997, _mm256_mul_pd(v, u), c004);
         _mm256_storeu_pd(out + i, r);
     }
-    for (; i < n; i++) {
+    for (long long i = vec; i < n; i++) {
         double u = 0.306923 * x[i] + 0.501;
         if (u < 0) u = 0; if (u > 1.002) u = 1.002;
         out[i] = 0.997729 * (x[i] * u) - 0.004004;
