@@ -31,13 +31,25 @@ KERNELS = dict(gelu=spear_gelu, lorentz=spear_lorentz, gauss=spear_gauss,
                soft=spear_soft, kepler=spear_kepler)
 EMB_KERNELS = [spear_gelu, spear_lorentz, spear_gauss, spear_soft]
 
-# ---------- Features structurelles (10 dims, identiques train/inférence) ----------
+# ---------- Features (16 dims, identiques train/inférence) ----------
 TOOL_RE = r"(tool|bash|edit|exec|lance|exécute)"
 CODE_WORDS = ("écris", "write", "code", "fonction", "script")
 MATH_WORDS = ("gelu", "lorentz", "kepler", "math", "kernel")
+IMPERATIVE = ("fais", "do", "lance", "run", "calcule", "compute", "ajoute", "add",
+              "supprime", "delete", "modifie", "modify", "créé", "create")
+QUESTION_WORDS = ("quoi", "what", "comment", "how", "pourquoi", "why",
+                  "combien", "how many", "où", "where")
+TECH_WORDS = ("api", "http", "json", "sql", "git", "docker", "npm", "pip",
+              "commit", "deploy", "test", "debug", "error", "bug")
 
 def features_from_text(text: str) -> np.ndarray:
     t = (text or "").lower()
+    words = t.split()
+    n_words = max(len(words), 1)
+    unique_ratio = len(set(words)) / n_words
+    avg_word_len = sum(len(w) for w in words) / n_words
+    exclam = t.count("!")
+    dots = t.count("...")
     return np.array([
         np.log1p(len(t)) / 5,
         len(re.findall(TOOL_RE, t)) / 3,
@@ -49,6 +61,16 @@ def features_from_text(text: str) -> np.ndarray:
         1.0 if "?" in t else 0.0,
         1.0 if ("merci" in t or "thanks" in t) else 0.0,
         0.0,  # slot "tour" — rempli par l'agent ; sigma=0 au training => neutre
+        # --- embeddings sémantiques légers (6 dims) ---
+        unique_ratio,                        # richesse lexicale
+        min(avg_word_len / 10, 1.0),         # complexité mots
+        len(re.findall(TOOL_RE, t)) / 5
+        + (1.0 if any(k in t for k in IMPERATIVE) else 0.0),  # charge directive
+        (1.0 if any(k in t for k in QUESTION_WORDS) else 0.0)
+        + exclam / 5,                         # charge interrogative
+        (1.0 if any(k in t for k in TECH_WORDS) else 0.0)
+        + dots / 3,                           # charge technique
+        len(t.split("\n")) / 20,              # complexité structurelle
     ], dtype=np.float32)
 
 # ---------- Embedding SPEAR multi-kernels ----------
