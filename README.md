@@ -8,6 +8,11 @@ Built on top of:
 - **TinyPolicy** pre-trained on Fable-5-style structural signals (tool-use / complexity)
 - Optional **AVX2** kernels for the hot path
 
+> 📊 **Voir [`CHAMPIONS.md`](https://github.com/bahira/SpearVM/blob/master/CHAMPIONS.md)**
+> (dépôt SpearVM) pour les formes championnes accuracy & speed : le **tanh Pade [3/4]**
+> (L-inf 1.56e-3) et ses dérivés **gauss/lorentz/Sigmoid/SiLU** intégrés ici, ainsi que
+> les 3 variantes GELU.
+
 ## Quick start
 
 ```bash
