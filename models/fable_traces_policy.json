@@ -1,13 +1,14 @@
 {
-  "version": 4,
+  "version": 5,
   "target": "needs-exec (réponse)",
   "dataset": "mixture:fable_sft+fable_premium",
-  "emb_d_in": 10,
+  "features": "v1-10d",
   "emb_extra": 8,
-  "emb_seed": 42,
-  "policy_h": 32,
-  "policy_seed": 7,
+  "policy_h": 96,
+  "combo": "spear",
+  "threshold": 0.5,
   "n_samples": 1957,
-  "test_accuracy": 0.7832,
-  "note": "mu/sigma figés au training — inférence single-row correcte"
+  "test_accuracy": 0.7883,
+  "baseline_official": 0.7832,
+  "note": "v2 — sélection sur val split dédié, test single-shot"
 }
